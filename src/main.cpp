@@ -18,6 +18,7 @@
 #include "sensesp/sensors/analog_input.h"
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/sensors/sensor.h"
+#include "sensesp_onewire/onewire_temperature.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/system/lambda_consumer.h"
 #include "sensesp/system/system_status_led.h"
@@ -37,6 +38,7 @@
 
 using namespace sensesp;
 using namespace halmet;
+using namespace sensesp::onewire;
 
 /////////////////////////////////////////////////////////////////////
 // Declare some global variables required for the firmware operation.
@@ -94,7 +96,7 @@ void setup() {
   BUILDER_CLASS builder;
   sensesp_app = (&builder)
                     // EDIT: Set a custom hostname for the app.
-                    ->set_hostname("halmet")
+                    ->set_hostname("yanmar")
                     // EDIT: Optionally, hard-code the WiFi and Signal K server
                     // settings. This is normally not needed.
                     //->set_wifi("My WiFi SSID", "my_wifi_password")
@@ -113,6 +115,46 @@ void setup() {
   ads1115->setGain(kADS1115Gain);
   bool ads_initialized = ads1115->begin(kADS1115Address, i2c);
   debugD("ADS1115 initialized: %d", ads_initialized);
+
+  // Initialize OneWire temperature sensors
+  DallasTemperatureSensors* dts = new DallasTemperatureSensors(kOneWirePin);
+// Define how often SensESP should read the sensor(s) in milliseconds
+  uint read_delay = 500;
+
+  // Below are temperatures sampled and sent to Signal K server
+  // To find valid Signal K Paths that fits your need you look at this link:
+  // https://signalk.org/specification/1.4.0/doc/vesselsBranch.html
+
+  // Measure coolant temperature
+  auto coolant_temp =
+      new OneWireTemperature(dts, read_delay, "/coolantTemperature/oneWire");
+
+  ConfigItem(coolant_temp)
+      ->set_title("Coolant Temperature")
+      ->set_description("Temperature of the engine coolant")
+      ->set_sort_order(100);
+
+  auto coolant_temp_calibration =
+      new Linear(1.0, 0.0, "/coolantTemperature/linear");
+
+  ConfigItem(coolant_temp_calibration)
+      ->set_title("Coolant Temperature Calibration")
+      ->set_description("Calibration for the coolant temperature sensor")
+      ->set_sort_order(200);
+
+  /*auto coolant_temp_sk_output = new SKOutputFloat(
+      "propulsion.mainEngine.coolantTemperature", "/coolantTemperature/skPath");
+
+  ConfigItem(coolant_temp_sk_output)
+      ->set_title("Coolant Temperature Signal K Path")
+      ->set_description("Signal K path for the coolant temperature")
+      ->set_sort_order(300);
+
+  coolant_temp->connect_to(coolant_temp_calibration)
+      ->connect_to(coolant_temp_sk_output);*/
+
+
+
 
 #ifdef ENABLE_TEST_OUTPUT_PIN
   pinMode(kTestOutputPin, OUTPUT);
@@ -173,7 +215,7 @@ void setup() {
   ///////////////////////////////////////////////////////////////////
   // Analog inputs
 
-  bool enable_signalk_output = true;
+  bool enable_signalk_output = false;
 
   // Connect the tank senders.
   // EDIT: To enable more tanks, uncomment the lines below.
@@ -183,7 +225,6 @@ void setup() {
   // auto tank_a3_volume = ConnectTankSender(ads1115, 2, "A3");
   // auto tank_a4_volume = ConnectTankSender(ads1115, 3, "A4");
 
-#ifdef ENABLE_NMEA2000_OUTPUT
   // Tank 1, instance 0. Capacity 200 liters. You can change the capacity
   // in the web UI as well.
   // EDIT: Make sure this matches your tank configuration above.
@@ -196,7 +237,6 @@ void setup() {
       ->set_sort_order(3005);
 
   tank_a1_volume->connect_to(&(tank_a1_sender->tank_level_));
-#endif  // ENABLE_NMEA2000_OUTPUT
 
   if (display_present) {
     // EDIT: Duplicate the lines below to make the display show all your tanks.
@@ -212,8 +252,8 @@ void setup() {
       ->set_description("Voltage level of analog input A2")
       ->set_sort_order(3000);
 
-  a2_voltage->connect_to(new LambdaConsumer<float>(
-      [](float value) { debugD("Voltage A2: %f", value); }));
+  //a2_voltage->connect_to(new LambdaConsumer<float>(
+  //    [](float value) { debugD("Voltage A2: %f", value); }));
 
   // If you want to output something else than the voltage value,
   // you can insert a suitable transform here.
