@@ -24,6 +24,7 @@
 #include "sensesp/system/system_status_led.h"
 #include "sensesp/transforms/lambda_transform.h"
 #include "sensesp/transforms/linear.h"
+#include "sensesp/transforms/threshold.h"
 #include "sensesp/ui/config_item.h"
 #include "sensesp_app_builder.h"
 #define BUILDER_CLASS SensESPAppBuilder
@@ -78,6 +79,7 @@ const int kTestOutputPin = GPIO_NUM_33;
 // halmet_digital.cpp), this frequency corresponds to 3.8 r/s or about 228 rpm.
 const int kTestOutputFrequency = 380;
 #endif
+
 
 /////////////////////////////////////////////////////////////////////
 // The setup function performs one-time application initialization.
@@ -142,19 +144,44 @@ void setup() {
       ->set_description("Calibration for the coolant temperature sensor")
       ->set_sort_order(200);
 
-  /*auto coolant_temp_sk_output = new SKOutputFloat(
-      "propulsion.mainEngine.coolantTemperature", "/coolantTemperature/skPath");
+  // Measure oil temperature
+  auto oil_temp =
+      new OneWireTemperature(dts, read_delay, "/oilTemperature/oneWire");
 
-  ConfigItem(coolant_temp_sk_output)
-      ->set_title("Coolant Temperature Signal K Path")
-      ->set_description("Signal K path for the coolant temperature")
+  ConfigItem(oil_temp)
+      ->set_title("Oil Temperature")
+      ->set_description("Temperature of the engine oil")
       ->set_sort_order(300);
 
-  coolant_temp->connect_to(coolant_temp_calibration)
-      ->connect_to(coolant_temp_sk_output);*/
+  auto oil_temp_calibration =
+      new Linear(1.0, 0.0, "/oilTemperature/linear");
 
+  ConfigItem(oil_temp_calibration)
+      ->set_title("Oil Temperature Calibration")
+      ->set_description("Calibration for the oil temperature sensor")
+      ->set_sort_order(400);
 
+  // Measure exhaust temperature
+  auto exhaust_temp =
+      new OneWireTemperature(dts, read_delay, "/exhaustTemperature/oneWire");
 
+  ConfigItem(exhaust_temp)
+      ->set_title("Exhaust Temperature")
+      ->set_description("Temperature of the engine exhaust")
+      ->set_sort_order(500);
+
+  auto exhaust_temp_calibration =
+      new Linear(1.0, 0.0, "/exhaustTemperature/linear");
+
+  ConfigItem(exhaust_temp_calibration)
+      ->set_title("Exhaust Temperature Calibration")
+      ->set_description("Calibration for the exhaust temperature sensor")
+      ->set_sort_order(600);
+
+  auto exhaustTempThreshold = new FloatThreshold(60.0f, 200.0f, true, "/exhaustTemperature/alarmThreshold");
+  ConfigItem(exhaustTempThreshold)
+       ->set_title("Threshold")
+       ->set_sort_order(601);
 
 #ifdef ENABLE_TEST_OUTPUT_PIN
   pinMode(kTestOutputPin, OUTPUT);
@@ -212,6 +239,41 @@ void setup() {
   // Initialize the OLED display
   bool display_present = InitializeSSD1306(sensesp_app->get(), &display, i2c);
 
+
+  // Instantiate Engine dynamic data message
+  N2kEngineParameterDynamicSender* engine_dynamic_sender =
+      new N2kEngineParameterDynamicSender("/NMEA 2000/Engine 1 Dynamic", 0,
+                                          nmea2000);
+
+  ConfigItem(engine_dynamic_sender)
+      ->set_title("Engine 1 Dynamic")
+      ->set_description("NMEA 2000 dynamic engine parameters for engine 1")
+      ->set_sort_order(3010);
+
+  // Connect outputs to the N2k senders.
+  // EDIT: Make sure this matches your tacho configuration above.
+  //       Duplicate the lines below to connect more tachos, but be sure to
+  //       use different engine instances.
+  N2kEngineParameterRapidSender* engine_rapid_sender =
+      new N2kEngineParameterRapidSender("/NMEA 2000/Engine 1 Rapid Update", 0,
+                                        nmea2000);  // Engine 1, instance
+
+  ConfigItem(engine_rapid_sender)
+      ->set_title("Engine 1 Rapid Update")
+      ->set_description("NMEA 2000 rapid update engine parameters for engine 1")
+      ->set_sort_order(3015);
+
+
+
+
+  ///////////////////////////////////////////////////////////////////
+  // Temperatures 
+  
+  coolant_temp->connect_to(engine_dynamic_sender->temperature_);
+  oil_temp->connect_to(engine_dynamic_sender->oil_temperature_);
+
+  exhaust_temp->connect_to(exhaustTempThreshold)->connect_to(engine_dynamic_sender->over_temperature_);
+
   ///////////////////////////////////////////////////////////////////
   // Analog inputs
 
@@ -225,18 +287,7 @@ void setup() {
   // auto tank_a3_volume = ConnectTankSender(ads1115, 2, "A3");
   // auto tank_a4_volume = ConnectTankSender(ads1115, 3, "A4");
 
-  // Tank 1, instance 0. Capacity 200 liters. You can change the capacity
-  // in the web UI as well.
-  // EDIT: Make sure this matches your tank configuration above.
-  N2kFluidLevelSender* tank_a1_sender = new N2kFluidLevelSender(
-      "/Tanks/Fuel/NMEA 2000", 0, N2kft_Fuel, 200, nmea2000);
-
-  ConfigItem(tank_a1_sender)
-      ->set_title("Tank A1 NMEA 2000")
-      ->set_description("NMEA 2000 tank sender for tank A1")
-      ->set_sort_order(3005);
-
-  tank_a1_volume->connect_to(&(tank_a1_sender->tank_level_));
+  
 
   if (display_present) {
     // EDIT: Duplicate the lines below to make the display show all your tanks.
@@ -262,9 +313,9 @@ void setup() {
   // auto a2_distance = new Linear(0.17, 0.0);
   // a2_voltage->connect_to(a2_distance);
 
-  a2_voltage->connect_to(
-      new SKOutputFloat("sensors.a2.voltage", "Analog Voltage A2",
-                        new SKMetadata("V", "Analog Voltage A2")));
+  //a2_voltage->connect_to(
+  //    new SKOutputFloat("sensors.a2.voltage", "Analog Voltage A2",
+  //                      new SKMetadata("V", "Analog Voltage A2")));
   // Example of how to output the distance value to Signal K.
   // a2_distance->connect_to(
   //     new SKOutputFloat("sensors.a2.distance", "Analog Distance A2",
@@ -291,16 +342,7 @@ void setup() {
   // alarm_d4_input->connect_to(
   //     new LambdaConsumer<bool>([](bool value) { alarm_states[3] = value; }));
 
-  // EDIT: This example connects the D2 alarm input to the low oil pressure
-  // warning. Modify according to your needs.
-  N2kEngineParameterDynamicSender* engine_dynamic_sender =
-      new N2kEngineParameterDynamicSender("/NMEA 2000/Engine 1 Dynamic", 0,
-                                          nmea2000);
-
-  ConfigItem(engine_dynamic_sender)
-      ->set_title("Engine 1 Dynamic")
-      ->set_description("NMEA 2000 dynamic engine parameters for engine 1")
-      ->set_sort_order(3010);
+  
 
   alarm_d2_input->connect_to(engine_dynamic_sender->low_oil_pressure_);
 
@@ -317,18 +359,9 @@ void setup() {
   // EDIT: More tacho inputs can be defined by duplicating the line below.
   auto tacho_d1_frequency = ConnectTachoSender(kDigitalInputPin1, "main");
 
-  // Connect outputs to the N2k senders.
-  // EDIT: Make sure this matches your tacho configuration above.
-  //       Duplicate the lines below to connect more tachos, but be sure to
-  //       use different engine instances.
-  N2kEngineParameterRapidSender* engine_rapid_sender =
-      new N2kEngineParameterRapidSender("/NMEA 2000/Engine 1 Rapid Update", 0,
-                                        nmea2000);  // Engine 1, instance 0
+  
 
-  ConfigItem(engine_rapid_sender)
-      ->set_title("Engine 1 Rapid Update")
-      ->set_description("NMEA 2000 rapid update engine parameters for engine 1")
-      ->set_sort_order(3015);
+  
 
   tacho_d1_frequency->connect_to(&(engine_rapid_sender->engine_speed_));
 
@@ -363,4 +396,6 @@ void setup() {
   }
 }
 
-void loop() { event_loop()->tick(); }
+void loop() {
+    event_loop()->tick();
+}
