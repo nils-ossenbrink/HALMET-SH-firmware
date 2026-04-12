@@ -10,6 +10,7 @@
 
 #include <Adafruit_ADS1X15.h>
 #include <Adafruit_GFX.h>
+#include <Adafruit_MLX90614.h>
 #include <Adafruit_SSD1306.h>
 #include <NMEA2000_esp32.h>
 
@@ -32,6 +33,7 @@
 #include "halmet_analog.h"
 #include "halmet_const.h"
 #include "halmet_digital.h"
+#include "halmet_engine_hours.h"
 #include "halmet_display.h"
 #include "halmet_serial.h"
 #include "sensesp/net/http_server.h"
@@ -263,11 +265,41 @@ void setup() {
       ->set_description("NMEA 2000 rapid update engine parameters for engine 1")
       ->set_sort_order(3015);
 
+  // MLX90614 non-contact infrared sensor for drive shaft bearing temperature.
+  // Default I2C address: 0x5A. Shares the existing I2C bus.
+  // Must be created after nmea2000->Open() so the sender pointer is valid.
+  auto mlx = new Adafruit_MLX90614();
+  bool mlx_initialized = mlx->begin(MLX90614_I2CADDR, i2c);
+  debugD("MLX90614 initialized: %d", mlx_initialized);
 
+  if (mlx_initialized) {
+    auto shaft_temp_sensor = new RepeatSensor<float>(
+        500, [mlx]() -> float {
+          return static_cast<float>(mlx->readObjectTempC()) + 273.15f;
+        });
 
+    auto shaft_temp_calibration =
+        new Linear(1.0, 0.0, "/shaftTemperature/calibration");
+    ConfigItem(shaft_temp_calibration)
+        ->set_title("Shaft Temperature Calibration")
+        ->set_description("Offset/scale calibration for the MLX90614 sensor")
+        ->set_sort_order(700);
+
+    auto shaft_temp_n2k = new N2kTemperatureSender(
+        "/NMEA 2000/Shaft Temperature", 0, N2kts_ShaftSealTemperature,
+        nmea2000);
+    ConfigItem(shaft_temp_n2k)
+        ->set_title("Shaft Temperature NMEA 2000")
+        ->set_description(
+            "NMEA 2000 PGN 130312 output for drive shaft temperature")
+        ->set_sort_order(3030);
+
+    shaft_temp_sensor->connect_to(shaft_temp_calibration)
+        ->connect_to(shaft_temp_n2k->temperature_.get());
+  }
 
   ///////////////////////////////////////////////////////////////////
-  // Temperatures 
+  // Temperatures
   
   coolant_temp->connect_to(engine_dynamic_sender->temperature_);
   oil_temp->connect_to(engine_dynamic_sender->oil_temperature_);
@@ -364,6 +396,19 @@ void setup() {
   
 
   tacho_d1_frequency->connect_to(&(engine_rapid_sender->engine_speed_));
+
+  // Engine hours counter: counts seconds while rev/s >= threshold, persisted
+  // across reboots. Default threshold is 3 rev/s (= 180 RPM).
+  auto engine_hours = new EngineHoursCounter(3.0f, "/EngineHours");
+
+  ConfigItem(engine_hours)
+      ->set_title("Engine Hours")
+      ->set_description(
+          "Engine running hours counter (persisted across restarts)")
+      ->set_sort_order(3020);
+
+  tacho_d1_frequency->connect_to(engine_hours);
+  engine_hours->connect_to(engine_dynamic_sender->total_engine_hours_.get());
 
   if (display_present) {
     tacho_d1_frequency->connect_to(new LambdaConsumer<float>(

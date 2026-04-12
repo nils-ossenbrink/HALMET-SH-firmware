@@ -8,9 +8,10 @@
 
 using namespace sensesp;
 
-// Default RPM count scale factor, corresponds to 100 pulses per revolution.
-// This is rarely, if ever correct.
-const float kDefaultFrequencyScale = 1 / 100.;
+// Default RPM count scale factor for Yanmar 3HM35 engines.
+// The ring gear has 114 teeth, so the MPU generates 114 pulses per revolution.
+// For 1GM10/2GM20/3GM30 engines, use 1/97. instead.
+const float kDefaultFrequencyScale = 1 / 114.;
 
 FloatProducer* ConnectTachoSender(int pin, String name) {
   char config_path[80];

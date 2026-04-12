@@ -388,6 +388,78 @@ const String ConfigSchema(const N2kFluidLevelSender& obj) {
     })###";
 };
 
+/**
+ * @brief Transmit NMEA 2000 PGN 130316: Temperature, Extended Range
+ *
+ * Modern replacement for the deprecated PGN 130312. Sends a single temperature
+ * value with configurable instance and source. Temperature input in Kelvin.
+ */
+class N2kTemperatureSender : public sensesp::FileSystemSaveable {
+ public:
+  N2kTemperatureSender(String config_path, uint8_t temp_instance,
+                       tN2kTempSource temp_source, tNMEA2000* nmea2000)
+      : sensesp::FileSystemSaveable{config_path},
+        temp_instance_{temp_instance},
+        temp_source_{temp_source},
+        nmea2000_{nmea2000},
+        repeat_interval_{2000},
+        expiry_{10000} {
+    load();
+    temperature_ = std::make_shared<sensesp::RepeatExpiring<double>>(
+        repeat_interval_, expiry_);
+
+    sensesp::event_loop()->onRepeat(repeat_interval_, [this]() {
+      tN2kMsg N2kMsg;
+      SetN2kTemperatureExt(N2kMsg, 0xff, temp_instance_, temp_source_,
+                           temperature_->get());
+      nmea2000_->SendMsg(N2kMsg);
+    });
+  }
+
+  bool from_json(const JsonObject& config) override {
+    if (config["temp_instance"].is<int>()) {
+      temp_instance_ = config["temp_instance"].as<uint8_t>();
+    }
+    if (config["temp_source"].is<int>()) {
+      temp_source_ = static_cast<tN2kTempSource>(config["temp_source"].as<int>());
+    }
+    return true;
+  }
+
+  bool to_json(JsonObject& config) override {
+    config["temp_instance"] = temp_instance_;
+    config["temp_source"] = static_cast<int>(temp_source_);
+    return true;
+  }
+
+  std::shared_ptr<sensesp::RepeatExpiring<double>> temperature_;
+
+ protected:
+  uint8_t temp_instance_;
+  tN2kTempSource temp_source_;
+  tNMEA2000* nmea2000_;
+  unsigned int repeat_interval_;
+  unsigned int expiry_;
+};
+
+const String ConfigSchema(const N2kTemperatureSender& obj) {
+  return R"###({
+    "type": "object",
+    "properties": {
+      "temp_instance": {
+        "title": "Temperature instance",
+        "type": "integer",
+        "description": "NMEA 2000 temperature instance number (0-253)"
+      },
+      "temp_source": {
+        "title": "Temperature source",
+        "type": "integer",
+        "description": "NMEA 2000 temperature source code (PGN 130316): 3=Engine Room, 14=Exhaust Gas"
+      }
+    }
+  })###";
+}
+
 }  // namespace halmet
 
 #endif  // HALMET_SRC_N2K_SENDERS_H_
