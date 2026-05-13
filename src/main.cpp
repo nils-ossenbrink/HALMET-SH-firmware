@@ -146,21 +146,21 @@ void setup() {
       ->set_description("Calibration for the coolant temperature sensor")
       ->set_sort_order(200);
 
-  // Measure oil temperature
-  auto oil_temp =
-      new OneWireTemperature(dts, read_delay, "/oilTemperature/oneWire");
+  // Measure engine room temperature
+  auto engine_room_temp =
+      new OneWireTemperature(dts, read_delay, "/engineRoomTemperature/oneWire");
 
-  ConfigItem(oil_temp)
-      ->set_title("Oil Temperature")
-      ->set_description("Temperature of the engine oil")
+  ConfigItem(engine_room_temp)
+      ->set_title("Engine Room Temperature")
+      ->set_description("Temperature of the engine room")
       ->set_sort_order(300);
 
-  auto oil_temp_calibration =
-      new Linear(1.0, 0.0, "/oilTemperature/linear");
+  auto engine_room_temp_calibration =
+      new Linear(1.0, 0.0, "/engineRoomTemperature/linear");
 
-  ConfigItem(oil_temp_calibration)
-      ->set_title("Oil Temperature Calibration")
-      ->set_description("Calibration for the oil temperature sensor")
+  ConfigItem(engine_room_temp_calibration)
+      ->set_title("Engine Room Temperature Calibration")
+      ->set_description("Calibration for the engine room temperature sensor")
       ->set_sort_order(400);
 
   // Measure exhaust temperature
@@ -298,11 +298,33 @@ void setup() {
         ->connect_to(shaft_temp_n2k->temperature_.get());
   }
 
+  auto engine_room_temp_n2k = new N2kTemperatureSender(
+      "/NMEA 2000/Engine Room Temperature", 1, N2kts_EngineRoomTemperature,
+      nmea2000);
+  ConfigItem(engine_room_temp_n2k)
+      ->set_title("Engine Room Temperature NMEA 2000")
+      ->set_description(
+          "NMEA 2000 PGN 130316 output for engine room temperature")
+      ->set_sort_order(3035);
+
+  auto exhaust_temp_n2k = new N2kTemperatureSender(
+      "/NMEA 2000/Exhaust Temperature", 2, N2kts_ExhaustGasTemperature,
+      nmea2000);
+  ConfigItem(exhaust_temp_n2k)
+      ->set_title("Exhaust Temperature NMEA 2000")
+      ->set_description(
+          "NMEA 2000 PGN 130316 output for exhaust temperature")
+      ->set_sort_order(3040);
+
   ///////////////////////////////////////////////////////////////////
   // Temperatures
   
-  coolant_temp->connect_to(engine_dynamic_sender->temperature_);
-  oil_temp->connect_to(engine_dynamic_sender->oil_temperature_);
+    coolant_temp->connect_to(coolant_temp_calibration)
+            ->connect_to(engine_dynamic_sender->temperature_);
+    engine_room_temp->connect_to(engine_room_temp_calibration)
+      ->connect_to(engine_room_temp_n2k->temperature_.get());
+    exhaust_temp->connect_to(exhaust_temp_calibration)
+            ->connect_to(exhaust_temp_n2k->temperature_.get());
 
   exhaust_temp->connect_to(exhaustTempThreshold)->connect_to(engine_dynamic_sender->over_temperature_);
 

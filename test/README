@@ -9,3 +9,28 @@ in the development cycle.
 
 More information about PlatformIO Unit Testing:
 - https://docs.platformio.org/page/plus/unit-testing.html
+
+Hardware-in-the-loop test (Actisense on COM15)
+---------------------------------------------
+
+Automated NMEA 2000 checks are available via:
+
+python test/com15_hil_test.py --port COM15 --duration 30
+
+The script expects canboat tools in PATH:
+- actisense-serial
+- analyzer
+
+Default checks:
+- PGN 127488 present and cadence approximately 100 ms
+- PGN 127489 present and cadence approximately 500 ms
+
+Optional checks:
+- Require shaft temperature PGN 130312:
+	python test/com15_hil_test.py --port COM15 --require-shaft-temp
+- Validate expected RPM (for ENABLE_TEST_OUTPUT_PIN loopback, typically ~228 RPM):
+	python test/com15_hil_test.py --port COM15 --expect-rpm 228 --rpm-tolerance 30
+
+Offline analysis from previously captured canboat JSON lines:
+
+python test/com15_hil_test.py --input-jsonl path/to/capture.jsonl
