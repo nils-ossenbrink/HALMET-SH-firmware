@@ -378,33 +378,55 @@ void setup() {
   ///////////////////////////////////////////////////////////////////
   // Digital alarm inputs
 
-  // EDIT: More alarm inputs can be defined by duplicating the lines below.
-  // Make sure to not define a pin for both a tacho and an alarm.
+  // D2 switch is open when there is no oil pressure and closes to GND when
+  // pressure is present. With INPUT_PULLUP this maps directly to low oil alarm.
   auto alarm_d2_input = ConnectAlarmSender(kDigitalInputPin2, "D2");
-  auto alarm_d3_input = ConnectAlarmSender(kDigitalInputPin3, "D3");
-  // auto alarm_d4_input = ConnectAlarmSender(kDigitalInputPin4, "D4");
-
-  // Update the alarm states based on the input value changes.
-  // EDIT: If you added more alarm inputs, uncomment the respective lines below.
+    alarm_d2_input->connect_to(new LambdaConsumer<bool>([](bool value) {
+        static bool initialized = false;
+        static bool last_value = false;
+        if (!initialized || value != last_value) {
+            debugD("D2 raw state changed: %d", value);
+            last_value = value;
+            initialized = true;
+        }
+    }));
   alarm_d2_input->connect_to(
       new LambdaConsumer<bool>([](bool value) { alarm_states[1] = value; }));
-  // In this example, alarm_d3_input is active low, so invert the value.
-  auto alarm_d3_inverted = alarm_d3_input->connect_to(
-      new LambdaTransform<bool, bool>([](bool value) { return !value; }));
-  alarm_d3_inverted->connect_to(
-      new LambdaConsumer<bool>([](bool value) { alarm_states[2] = value; }));
-  // alarm_d4_input->connect_to(
-  //     new LambdaConsumer<bool>([](bool value) { alarm_states[3] = value; }));
-
-  
-
+    alarm_d2_input->connect_to(new LambdaConsumer<bool>([](bool value) {
+        static bool initialized = false;
+        static bool last_value = false;
+        if (!initialized || value != last_value) {
+            debugD("D2 low_oil_pressure mapped state: %d", value);
+            last_value = value;
+            initialized = true;
+        }
+    }));
   alarm_d2_input->connect_to(engine_dynamic_sender->low_oil_pressure_);
 
-  // This is just an example -- normally temperature alarms would not be
-  // active-low (inverted).
+  // Overtemperature alarm is active low, so invert the value before connecting to the sender.
+  // In this example, alarm_d3_input is active low, so invert the value.
+  auto alarm_d3_input = ConnectAlarmSender(kDigitalInputPin3, "D3");
+    alarm_d3_input->connect_to(new LambdaConsumer<bool>([](bool value) {
+        static bool initialized = false;
+        static bool last_value = false;
+        if (!initialized || value != last_value) {
+            debugD("D3 raw state changed: %d", value);
+            last_value = value;
+            initialized = true;
+        }
+    }));
+  auto alarm_d3_inverted = alarm_d3_input->connect_to(new LambdaTransform<bool, bool>([](bool value) { return !value; }));
+    alarm_d3_inverted->connect_to(new LambdaConsumer<bool>([](bool value) {
+        static bool initialized = false;
+        static bool last_value = false;
+        if (!initialized || value != last_value) {
+            debugD("D3 over_temperature mapped state: %d", value);
+            last_value = value;
+            initialized = true;
+        }
+    }));
+  alarm_d3_inverted->connect_to(new LambdaConsumer<bool>([](bool value) { alarm_states[2] = value; }));
   alarm_d3_inverted->connect_to(engine_dynamic_sender->over_temperature_);
-
-  // FIXME: Transmit the alarms over SK as well.
 
   ///////////////////////////////////////////////////////////////////
   // Digital tacho inputs
@@ -412,11 +434,6 @@ void setup() {
   // Connect the tacho senders. Engine name is "main".
   // EDIT: More tacho inputs can be defined by duplicating the line below.
   auto tacho_d1_frequency = ConnectTachoSender(kDigitalInputPin1, "main");
-
-  
-
-  
-
   tacho_d1_frequency->connect_to(&(engine_rapid_sender->engine_speed_));
 
   // Engine hours counter: counts seconds while rev/s >= threshold, persisted
@@ -431,11 +448,6 @@ void setup() {
 
   tacho_d1_frequency->connect_to(engine_hours);
   engine_hours->connect_to(engine_dynamic_sender->total_engine_hours_.get());
-
-  if (display_present) {
-    tacho_d1_frequency->connect_to(new LambdaConsumer<float>(
-        [](float value) { PrintValue(display, 3, "RPM D1", 60 * value); }));
-  }
 
   ///////////////////////////////////////////////////////////////////
   // Display setup
