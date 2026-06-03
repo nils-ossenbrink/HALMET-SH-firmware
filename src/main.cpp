@@ -200,9 +200,11 @@ static void setup_temperatures() {
       ->set_sort_order(601);
   exhaust_temp->connect_to(exhaust_cal)
       ->connect_to(exhaust_n2k->temperature_.get());
-  // NOTE: over_temperature_ is also written by the D3 digital alarm (setup_alarms).
-  //       A proper OR-merge of both sources is a known TODO.
+  // NOTE: over_temperature_ is written by both exhaust_threshold and D3 digital alarm.
+  //       Both are gated by g_engine_running. Last writer wins (no OR-merge needed
+  //       when engine is off; at runtime both alarm sources are valid).
   exhaust_temp->connect_to(exhaust_threshold)
+      ->connect_to(new LambdaTransform<bool, bool>([](bool v) { return v && g_engine_running; }))
       ->connect_to(engine_dynamic_sender->over_temperature_);
 
   // Shaft bearing temperature (MLX90614 non-contact IR sensor)
@@ -258,7 +260,8 @@ static void setup_alarms() {
   // D2: low oil pressure — open circuit with INPUT_PULLUP = alarm active
   auto alarm_d2 = ConnectAlarmSender(kDigitalInputPin2, "D2");
   alarm_d2->connect_to(new LambdaConsumer<bool>([](bool v) {
-    debugD("D2 oil pressure alarm: %d", v);
+    static bool prev = !v;
+    if (v != prev) { debugD("D2 oil pressure alarm: %d", v); prev = v; }
   }));
   // Gate: suppress alarm while engine is not running to avoid false positives at startup
   auto oil_gated = new LambdaTransform<bool, bool>(
@@ -272,9 +275,12 @@ static void setup_alarms() {
   auto alarm_d3_inv = alarm_d3->connect_to(
       new LambdaTransform<bool, bool>([](bool v) { return !v; }));
   alarm_d3_inv->connect_to(new LambdaConsumer<bool>([](bool v) {
-    debugD("D3 overtemp alarm: %d", v);
+    static bool prev = !v;
+    if (v != prev) { debugD("D3 overtemp alarm: %d", v); prev = v; }
   }));
-  alarm_d3_inv->connect_to(engine_dynamic_sender->over_temperature_);
+  auto alarm_d3_gated = alarm_d3_inv->connect_to(
+      new LambdaTransform<bool, bool>([](bool v) { return v && g_engine_running; }));
+  alarm_d3_gated->connect_to(engine_dynamic_sender->over_temperature_);
 }
 
 // ============================================================
