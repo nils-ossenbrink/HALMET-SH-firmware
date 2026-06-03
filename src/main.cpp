@@ -5,9 +5,7 @@
 // #define ENABLE_TEST_OUTPUT_PIN
 
 #include <Adafruit_ADS1X15.h>
-#include <Adafruit_GFX.h>
 #include <Adafruit_MLX90614.h>
-#include <Adafruit_SSD1306.h>
 #include <NMEA2000_esp32.h>
 
 #include "n2k_senders.h"
@@ -29,7 +27,6 @@
 #include "halmet_const.h"
 #include "halmet_digital.h"
 #include "halmet_engine_hours.h"
-#include "halmet_display.h"
 #include "halmet_serial.h"
 #include "sensesp/net/http_server.h"
 #include "sensesp/net/networking.h"
@@ -44,7 +41,6 @@ using namespace sensesp::onewire;
 
 tNMEA2000* nmea2000;
 TwoWire* i2c;
-Adafruit_SSD1306* display;
 Adafruit_ADS1115* ads1115;
 DallasTemperatureSensors* dts;
 
@@ -55,7 +51,6 @@ N2kEngineParameterRapidSender* engine_rapid_sender;
 // Runtime state
 // ============================================================
 
-bool alarm_states[4] = {false, false, false, false};
 bool g_engine_running = false;
 const float kEngineRunningThresholdRevsPerSec = 3.0f;
 
@@ -239,19 +234,14 @@ static void setup_temperatures() {
 // setup_analog_inputs — fuel tank level + voltage measurement
 // ============================================================
 
-static void setup_analog_inputs(bool display_present) {
+static void setup_analog_inputs() {
   const bool enable_sk = false;
 
-  auto tank_a1 = ConnectTankSender(ads1115, 0, "Fuel", "fuel.main", 3000, enable_sk);
+  ConnectTankSender(ads1115, 0, "Fuel", "fuel.main", 3000, enable_sk);
   // Uncomment to add more tanks:
-  // auto tank_a2 = ConnectTankSender(ads1115, 1, "Water",    "water.main",  3100, enable_sk);
-  // auto tank_a3 = ConnectTankSender(ads1115, 2, "Ballast",  "ballast.1",   3200, enable_sk);
-  // auto tank_a4 = ConnectTankSender(ads1115, 3, "LiveWell", "liveWell.1",  3300, enable_sk);
-
-  if (display_present) {
-    tank_a1->connect_to(new LambdaConsumer<float>(
-        [](float v) { PrintValue(display, 2, "Tank A1", 100 * v); }));
-  }
+  // ConnectTankSender(ads1115, 1, "Water",    "water.main",  3100, enable_sk);
+  // ConnectTankSender(ads1115, 2, "Ballast",  "ballast.1",   3200, enable_sk);
+  // ConnectTankSender(ads1115, 3, "LiveWell", "liveWell.1",  3300, enable_sk);
 
   auto a2_voltage = new ADS1115VoltageInput(ads1115, 1, "/Voltage A2");
   ConfigItem(a2_voltage)
@@ -268,7 +258,6 @@ static void setup_alarms() {
   // D2: low oil pressure — open circuit with INPUT_PULLUP = alarm active
   auto alarm_d2 = ConnectAlarmSender(kDigitalInputPin2, "D2");
   alarm_d2->connect_to(new LambdaConsumer<bool>([](bool v) {
-    alarm_states[1] = v;
     debugD("D2 oil pressure alarm: %d", v);
   }));
   // Gate: suppress alarm while engine is not running to avoid false positives at startup
@@ -283,7 +272,6 @@ static void setup_alarms() {
   auto alarm_d3_inv = alarm_d3->connect_to(
       new LambdaTransform<bool, bool>([](bool v) { return !v; }));
   alarm_d3_inv->connect_to(new LambdaConsumer<bool>([](bool v) {
-    alarm_states[2] = v;
     debugD("D3 overtemp alarm: %d", v);
   }));
   alarm_d3_inv->connect_to(engine_dynamic_sender->over_temperature_);
@@ -321,24 +309,6 @@ static void setup_tacho() {
   engine_hours->connect_to(engine_dynamic_sender->total_engine_hours_.get());
 }
 
-// ============================================================
-// setup_display_outputs — periodic display updates
-// ============================================================
-
-static void setup_display_outputs(bool display_present) {
-  if (!display_present) return;
-
-  event_loop()->onRepeat(1000, []() {
-    PrintValue(display, 1, "IP:", WiFi.localIP().toString());
-  });
-  event_loop()->onRepeat(1000, []() {
-    char s[5] = {};
-    for (int i = 0; i < 4; i++) s[i] = alarm_states[i] ? '*' : '_';
-    PrintValue(display, 4, "Alarm", s);
-  });
-}
-
-
 /////////////////////////////////////////////////////////////////////
 // Arduino entry points
 
@@ -353,13 +323,10 @@ void setup() {
   setup_framework();
   setup_nmea2000();
 
-  bool display_present = InitializeSSD1306(sensesp_app->get(), &display, i2c);
-
   setup_temperatures();
-  setup_analog_inputs(display_present);
+  setup_analog_inputs();
   setup_alarms();
   setup_tacho();
-  setup_display_outputs(display_present);
 
 #ifdef ENABLE_TEST_OUTPUT_PIN
   pinMode(kTestOutputPin, OUTPUT);
