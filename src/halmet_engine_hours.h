@@ -34,8 +34,10 @@ class EngineHoursCounter : public sensesp::FileSystemSaveable,
         if (total_seconds_ % 60 == 0) {
           save();
         }
-        this->emit(total_seconds_);
       }
+      // Always emit so the N2K sender is initialized with the loaded value,
+      // not just when the engine is running.
+      this->emit(total_seconds_);
     });
   }
 
