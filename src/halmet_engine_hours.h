@@ -41,6 +41,9 @@ class EngineHoursCounter : public sensesp::FileSystemSaveable,
 
   void set(const float& value) override { current_revs_per_second_ = value; }
 
+  // Gibt true zurück, wenn der Motor läuft (Drehzahl >= Schwelle)
+  bool is_running() const { return current_revs_per_second_ >= min_revs_per_second_; }
+
   bool from_json(const JsonObject& config) override {
     if (config["total_seconds"].is<uint32_t>()) {
       total_seconds_ = config["total_seconds"].as<uint32_t>();

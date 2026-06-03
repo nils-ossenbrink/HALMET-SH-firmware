@@ -1,3 +1,10 @@
+// Debug-Schalter für Motordrehzahl-Simulation
+#define ENABLE_DEBUG_ENGINE_RPM
+
+// Simulierte Drehzahl (rev/s), z.B. 4.0 = 240 RPM
+#ifdef ENABLE_DEBUG_ENGINE_RPM
+float debug_engine_revs_per_sec = 0.0f;
+#endif
 // Signal K application template file.
 //
 // This application demonstrates core SensESP concepts in a very
@@ -16,7 +23,6 @@
 
 #include "n2k_senders.h"
 #include "sensesp/net/discovery.h"
-#include "sensesp/sensors/analog_input.h"
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp_onewire/onewire_temperature.h"
@@ -56,6 +62,10 @@ Adafruit_SSD1306* display;
 // Store alarm states in an array for local display output
 bool alarm_states[4] = {false, false, false, false};
 
+// Shared runtime state used for alarm gating.
+bool g_engine_running = false;
+const float kEngineRunningThresholdRevsPerSec = 3.0f;
+
 // Set the ADS1115 GAIN to adjust the analog input voltage range.
 // On HALMET, this refers to the voltage range of the ADS1115 input
 // AFTER the 33.3/3.3 voltage divider.
@@ -92,6 +102,10 @@ void setup() {
   // esp_log_level_set("*", esp_log_level_t::ESP_LOG_DEBUG);
 
   Serial.begin(115200);
+
+#ifdef ENABLE_DEBUG_ENGINE_RPM
+    Serial.println("DEBUG: Sende im Serial-Monitor z.B. 'rpm 4.2' fuer 4.2 rev/s (252 RPM)");
+#endif
 
   /////////////////////////////////////////////////////////////////////
   // Initialize the application framework
@@ -401,7 +415,13 @@ void setup() {
             initialized = true;
         }
     }));
-  alarm_d2_input->connect_to(engine_dynamic_sender->low_oil_pressure_);
+    // Forward low oil pressure only while engine is running.
+    auto oil_alarm_with_engine_running =
+            new LambdaTransform<bool, bool>([](bool oil_alarm) {
+                return oil_alarm && g_engine_running;
+            });
+    alarm_d2_input->connect_to(oil_alarm_with_engine_running);
+    oil_alarm_with_engine_running->connect_to(engine_dynamic_sender->low_oil_pressure_);
 
   // Overtemperature alarm is active low, so invert the value before connecting to the sender.
   // In this example, alarm_d3_input is active low, so invert the value.
@@ -434,11 +454,11 @@ void setup() {
   // Connect the tacho senders. Engine name is "main".
   // EDIT: More tacho inputs can be defined by duplicating the line below.
   auto tacho_d1_frequency = ConnectTachoSender(kDigitalInputPin1, "main");
-  tacho_d1_frequency->connect_to(&(engine_rapid_sender->engine_speed_));
 
   // Engine hours counter: counts seconds while rev/s >= threshold, persisted
   // across reboots. Default threshold is 3 rev/s (= 180 RPM).
-  auto engine_hours = new EngineHoursCounter(3.0f, "/EngineHours");
+    auto engine_hours =
+            new EngineHoursCounter(kEngineRunningThresholdRevsPerSec, "/EngineHours");
 
   ConfigItem(engine_hours)
       ->set_title("Engine Hours")
@@ -446,7 +466,25 @@ void setup() {
           "Engine running hours counter (persisted across restarts)")
       ->set_sort_order(3020);
 
-  tacho_d1_frequency->connect_to(engine_hours);
+    // Motordrehzahl-Simulation: Wenn Debug aktiv, kombiniere echtes und simuliertes Signal
+#ifdef ENABLE_DEBUG_ENGINE_RPM
+    auto rpm_simulator = new LambdaTransform<float, float>([](float real_rpm) {
+        // Wenn debug_engine_revs_per_sec > 0, dann Simulationswert nehmen, sonst echten Wert
+        return debug_engine_revs_per_sec > 0.0f ? debug_engine_revs_per_sec : real_rpm;
+    });
+    tacho_d1_frequency->connect_to(rpm_simulator);
+    rpm_simulator->connect_to(&(engine_rapid_sender->engine_speed_));
+    rpm_simulator->connect_to(engine_hours);
+    rpm_simulator->connect_to(new LambdaConsumer<float>([](float rpm) {
+        g_engine_running = rpm >= kEngineRunningThresholdRevsPerSec;
+    }));
+#else
+    tacho_d1_frequency->connect_to(&(engine_rapid_sender->engine_speed_));
+    tacho_d1_frequency->connect_to(engine_hours);
+    tacho_d1_frequency->connect_to(new LambdaConsumer<float>([](float rpm) {
+        g_engine_running = rpm >= kEngineRunningThresholdRevsPerSec;
+    }));
+#endif
   engine_hours->connect_to(engine_dynamic_sender->total_engine_hours_.get());
 
   ///////////////////////////////////////////////////////////////////
@@ -477,4 +515,24 @@ void setup() {
 
 void loop() {
     event_loop()->tick();
+
+#ifdef ENABLE_DEBUG_ENGINE_RPM
+    // Prüfe, ob ein Serial-Befehl zur Simulation eingegeben wurde
+    if (Serial.available()) {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        if (cmd.startsWith("rpm ")) {
+            float val = cmd.substring(4).toFloat();
+            debug_engine_revs_per_sec = val;
+            Serial.print("DEBUG: Simulierte Motordrehzahl gesetzt auf ");
+            Serial.print(val);
+            Serial.print(" rev/s (RPM: ");
+            Serial.print(val * 60.0f);
+            Serial.println(")");
+        } else if (cmd == "rpm off") {
+            debug_engine_revs_per_sec = 0.0f;
+            Serial.println("DEBUG: Motordrehzahl-Simulation deaktiviert (echt)");
+        }
+    }
+#endif
 }
