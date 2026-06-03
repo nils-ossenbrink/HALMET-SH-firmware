@@ -71,7 +71,7 @@ BoolProducer* ConnectAlarmSender(int pin, String name) {
   char config_title[80];
   char config_description[80];
 
-  auto* alarm_input = new DigitalInputState(pin, INPUT_PULLUP, 100);
+  auto* alarm_input = new DigitalInputState(pin, INPUT, 100);
 
 #ifdef ENABLE_SIGNALK
   snprintf(config_path, sizeof(config_path), "/Alarm %s/SK Path", name.c_str());
